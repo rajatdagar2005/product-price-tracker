@@ -1,0 +1,6 @@
+{
+  "name": "Product Price Tracker",
+  "description": "Full-stack web-scraping product price tracker for INE mock store with scheduled cron and PostgreSQL history",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
