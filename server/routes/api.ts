@@ -26,7 +26,7 @@ export const apiRouter = Router();
 const STORE_BASE_URL = (
   process.env.MOCK_STORE_URL || 'https://demo.inelabteamdev.com'
 ).trim().replace(/\/+$/, '');
-const CRON_SECRET = process.env.CRON_SECRET || 'ine_cron_secret_rajat_2026';
+const CRON_SECRET = process.env.CRON_SECRET;
 
 // In-memory catalog cache to make product searches instantaneous
 let catalogCache: StoreCatalogItem[] = [];
@@ -861,141 +861,335 @@ const result = await scrapeProductWithRetry(productId, {
 // ----------------------------------------------------------------------
 // 6. Scheduled Cron Endpoint (Secured for cron-job.org)
 // ----------------------------------------------------------------------
-const handleCronScrape = async (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+// const handleCronScrape = async (req: Request, res: Response) => {
+//   const authHeader = req.headers.authorization || '';
+//   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
-  // Validate security token
-  if (token !== CRON_SECRET) {
+//   // Validate security token
+//   if (token !== CRON_SECRET) {
+//     return res.status(401).json({
+//       error: 'Unauthorized: Invalid or missing Cron Bearer token',
+//       hint: 'Include header: Authorization: Bearer <CRON_SECRET>'
+//     });
+//   }
+
+//   // Prevent overlapping cron jobs
+//   if (isCronRunning()) {
+//     return res.status(409).json({
+//       error: 'A scheduled cron scrape batch is already in progress. Skipping duplicate run.'
+//     });
+//   }
+
+//   setCronRunning(true);
+//   const cronStart = Date.now();
+
+//   try {
+//     const products = await getTrackedProducts();
+//     const activeProducts = products.filter(p => p.is_active);
+
+//     const summary = {
+//       total: activeProducts.length,
+//       successCount: 0,
+//       failCount: 0,
+//       results: [] as Array<{ productId: number; success: boolean; price?: number | null; error?: string | null }>
+//     };
+
+//     // Process products sequentially or in batches of 2 to protect memory
+//     for (const prod of activeProducts) {
+//       try {
+//         const scrapeRes = await scrapeProductWithRetry(prod.product_id, {
+//           // onAttempt: async (attemptNum, status, error) => {
+//           //   await recordScrapeAttempt({
+//           //     productId: prod.product_id,
+//           //     attemptNumber: attemptNum,
+//           //     status,
+//           //     durationMs: 0,
+//           //     errorMessage: error || null,
+//           //     diagnostics: { source: 'cron-job.org' }
+//           //   });
+//           // }
+//           onAttempt: async (attemptNum, status, error) => {
+//           // Log intermediate retries here.
+//           // The final success/failure is recorded below with the real duration.
+//           if (status === 'retried') {
+//             await recordScrapeAttempt({
+//               productId: prod.product_id,
+//               attemptNumber: attemptNum,
+//               status: 'retried',
+//               durationMs: 0,
+//               errorMessage: error || null,
+//               diagnostics: { source: 'cron-job.org' }
+//             });
+//           }
+//         }
+//         });
+
+//         if (scrapeRes.success && scrapeRes.price !== null) {
+//           await recordSuccessfulObservation({
+//             productId: prod.product_id,
+//             price: scrapeRes.price,
+//             currency: scrapeRes.currency,
+//             stock: scrapeRes.stock,
+//             isInStock: scrapeRes.isInStock
+//           });
+//           summary.successCount++;
+//           summary.results.push({ productId: prod.product_id, success: true, price: scrapeRes.price });
+//         } else {
+//           summary.failCount++;
+//           summary.results.push({ productId: prod.product_id, success: false, error: scrapeRes.errorMessage });
+//         }
+
+//         // Record final attempt record
+//         await recordScrapeAttempt({
+//           productId: prod.product_id,
+//           attemptNumber: scrapeRes.attemptsCount,
+//           status: scrapeRes.success ? 'success' : 'failed',
+//           httpStatus: scrapeRes.httpStatus,
+//           durationMs: scrapeRes.durationMs,
+//           extractedPrice: scrapeRes.price,
+//           extractedStock: scrapeRes.stock,
+//           errorMessage: scrapeRes.errorMessage || null,
+//           diagnostics: scrapeRes.diagnostics
+//         });
+//       // } catch (err: any) {
+//       //   // Individual product failure MUST NOT halt the batch!
+//       //   summary.failCount++;
+//       //   summary.results.push({ productId: prod.product_id, success: false, error: err?.message || String(err) });
+//       // }
+      
+//       } catch (err: any) {
+//   const errorMessage = err?.message || String(err);
+
+//   summary.failCount++;
+//   summary.results.push({
+//     productId: prod.product_id,
+//     success: false,
+//     error: errorMessage
+//   });
+
+//   // Record unexpected per-product errors too.
+//   try {
+//     await recordScrapeAttempt({
+//       productId: prod.product_id,
+//       attemptNumber: 0,
+//       status: 'failed',
+//       durationMs: 0,
+//       errorMessage,
+//       diagnostics: { source: 'cron-job.org', unexpectedError: true }
+//     });
+//   } catch (logErr) {
+//     console.error(
+//       `[CRON] Could not record unexpected failure for product ${prod.product_id}:`,
+//       logErr
+//     );
+//   }
+// }
+
+//     }
+
+//     res.json({
+//       message: 'Scheduled cron scrape completed',
+//       durationMs: Date.now() - cronStart,
+//       summary
+//     });
+//   } finally {
+//     setCronRunning(false);
+//   }
+// };
+
+// apiRouter.post('/cron/scrape', handleCronScrape);
+// apiRouter.get('/cron/scrape', handleCronScrape); // Support GET webhook if configured by cron-job.org
+
+// ----------------------------------------------------------------------
+// 6. Batch Scrape
+// ----------------------------------------------------------------------
+
+const runBatchScrape = async (
+  source: 'cron-job.org' | 'manual-trigger'
+) => {
+  const startTime = Date.now();
+
+  const products = await getTrackedProducts();
+  const activeProducts = products.filter(p => p.is_active);
+
+  const summary = {
+    total: activeProducts.length,
+    successCount: 0,
+    failCount: 0,
+    results: [] as Array<{
+      productId: number;
+      success: boolean;
+      price?: number | null;
+      error?: string | null;
+    }>
+  };
+
+  for (const prod of activeProducts) {
+    try {
+      const scrapeRes = await scrapeProductWithRetry(
+        prod.product_id,
+        {
+          onAttempt: async (attemptNum, status, error) => {
+            if (status === 'retried') {
+              await recordScrapeAttempt({
+                productId: prod.product_id,
+                attemptNumber: attemptNum,
+                status: 'retried',
+                durationMs: 0,
+                errorMessage: error || null,
+                diagnostics: { source }
+              });
+            }
+          }
+        }
+      );
+
+      if (scrapeRes.success && scrapeRes.price !== null) {
+        await recordSuccessfulObservation({
+          productId: prod.product_id,
+          price: scrapeRes.price,
+          currency: scrapeRes.currency,
+          stock: scrapeRes.stock,
+          isInStock: scrapeRes.isInStock
+        });
+
+        summary.successCount++;
+
+        summary.results.push({
+          productId: prod.product_id,
+          success: true,
+          price: scrapeRes.price
+        });
+      } else {
+        summary.failCount++;
+
+        summary.results.push({
+          productId: prod.product_id,
+          success: false,
+          error: scrapeRes.errorMessage
+        });
+      }
+
+      await recordScrapeAttempt({
+        productId: prod.product_id,
+        attemptNumber: scrapeRes.attemptsCount,
+        status: scrapeRes.success ? 'success' : 'failed',
+        httpStatus: scrapeRes.httpStatus,
+        durationMs: scrapeRes.durationMs,
+        extractedPrice: scrapeRes.price,
+        extractedStock: scrapeRes.stock,
+        errorMessage: scrapeRes.errorMessage || null,
+        diagnostics: scrapeRes.diagnostics
+      });
+
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+
+      summary.failCount++;
+
+      summary.results.push({
+        productId: prod.product_id,
+        success: false,
+        error: errorMessage
+      });
+
+      try {
+        await recordScrapeAttempt({
+          productId: prod.product_id,
+          attemptNumber: 0,
+          status: 'failed',
+          durationMs: 0,
+          errorMessage,
+          diagnostics: {
+            source,
+            unexpectedError: true
+          }
+        });
+      } catch (logErr) {
+        console.error(
+          `[BATCH] Could not record failure for product ${prod.product_id}:`,
+          logErr
+        );
+      }
+    }
+  }
+
+  return {
+    durationMs: Date.now() - startTime,
+    summary
+  };
+};
+
+
+// ----------------------------------------------------------------------
+// 7. Scheduled Cron Endpoint (Secured)
+// ----------------------------------------------------------------------
+
+const handleCronScrape = async (
+  req: Request,
+  res: Response
+) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+
+  if (!CRON_SECRET || token !== CRON_SECRET) {
     return res.status(401).json({
-      error: 'Unauthorized: Invalid or missing Cron Bearer token',
-      hint: 'Include header: Authorization: Bearer <CRON_SECRET>'
+      error: 'Unauthorized: Invalid or missing Cron Bearer token'
     });
   }
 
-  // Prevent overlapping cron jobs
   if (isCronRunning()) {
     return res.status(409).json({
-      error: 'A scheduled cron scrape batch is already in progress. Skipping duplicate run.'
+      error: 'A scheduled cron scrape batch is already in progress.'
     });
   }
 
   setCronRunning(true);
-  const cronStart = Date.now();
 
   try {
-    const products = await getTrackedProducts();
-    const activeProducts = products.filter(p => p.is_active);
-
-    const summary = {
-      total: activeProducts.length,
-      successCount: 0,
-      failCount: 0,
-      results: [] as Array<{ productId: number; success: boolean; price?: number | null; error?: string | null }>
-    };
-
-    // Process products sequentially or in batches of 2 to protect memory
-    for (const prod of activeProducts) {
-      try {
-        const scrapeRes = await scrapeProductWithRetry(prod.product_id, {
-          // onAttempt: async (attemptNum, status, error) => {
-          //   await recordScrapeAttempt({
-          //     productId: prod.product_id,
-          //     attemptNumber: attemptNum,
-          //     status,
-          //     durationMs: 0,
-          //     errorMessage: error || null,
-          //     diagnostics: { source: 'cron-job.org' }
-          //   });
-          // }
-          onAttempt: async (attemptNum, status, error) => {
-          // Log intermediate retries here.
-          // The final success/failure is recorded below with the real duration.
-          if (status === 'retried') {
-            await recordScrapeAttempt({
-              productId: prod.product_id,
-              attemptNumber: attemptNum,
-              status: 'retried',
-              durationMs: 0,
-              errorMessage: error || null,
-              diagnostics: { source: 'cron-job.org' }
-            });
-          }
-        }
-        });
-
-        if (scrapeRes.success && scrapeRes.price !== null) {
-          await recordSuccessfulObservation({
-            productId: prod.product_id,
-            price: scrapeRes.price,
-            currency: scrapeRes.currency,
-            stock: scrapeRes.stock,
-            isInStock: scrapeRes.isInStock
-          });
-          summary.successCount++;
-          summary.results.push({ productId: prod.product_id, success: true, price: scrapeRes.price });
-        } else {
-          summary.failCount++;
-          summary.results.push({ productId: prod.product_id, success: false, error: scrapeRes.errorMessage });
-        }
-
-        // Record final attempt record
-        await recordScrapeAttempt({
-          productId: prod.product_id,
-          attemptNumber: scrapeRes.attemptsCount,
-          status: scrapeRes.success ? 'success' : 'failed',
-          httpStatus: scrapeRes.httpStatus,
-          durationMs: scrapeRes.durationMs,
-          extractedPrice: scrapeRes.price,
-          extractedStock: scrapeRes.stock,
-          errorMessage: scrapeRes.errorMessage || null,
-          diagnostics: scrapeRes.diagnostics
-        });
-      // } catch (err: any) {
-      //   // Individual product failure MUST NOT halt the batch!
-      //   summary.failCount++;
-      //   summary.results.push({ productId: prod.product_id, success: false, error: err?.message || String(err) });
-      // }
-      
-      } catch (err: any) {
-  const errorMessage = err?.message || String(err);
-
-  summary.failCount++;
-  summary.results.push({
-    productId: prod.product_id,
-    success: false,
-    error: errorMessage
-  });
-
-  // Record unexpected per-product errors too.
-  try {
-    await recordScrapeAttempt({
-      productId: prod.product_id,
-      attemptNumber: 0,
-      status: 'failed',
-      durationMs: 0,
-      errorMessage,
-      diagnostics: { source: 'cron-job.org', unexpectedError: true }
-    });
-  } catch (logErr) {
-    console.error(
-      `[CRON] Could not record unexpected failure for product ${prod.product_id}:`,
-      logErr
-    );
-  }
-}
-
-    }
+    const result = await runBatchScrape('cron-job.org');
 
     res.json({
       message: 'Scheduled cron scrape completed',
-      durationMs: Date.now() - cronStart,
-      summary
+      ...result
     });
   } finally {
     setCronRunning(false);
   }
 };
 
+
+// ----------------------------------------------------------------------
+// 8. Manual Batch Endpoint (Used by Frontend)
+// ----------------------------------------------------------------------
+
+apiRouter.post('/products/scrape-all', async (
+  req: Request,
+  res: Response
+) => {
+  if (isCronRunning()) {
+    return res.status(409).json({
+      error: 'A batch scrape is already in progress.'
+    });
+  }
+
+  setCronRunning(true);
+
+  try {
+    const result = await runBatchScrape('manual-trigger');
+
+    res.json({
+      message: 'Manual batch scrape completed',
+      ...result
+    });
+  } finally {
+    setCronRunning(false);
+  }
+});
+
+
+// Cron-job.org uses this endpoint.
 apiRouter.post('/cron/scrape', handleCronScrape);
-apiRouter.get('/cron/scrape', handleCronScrape); // Support GET webhook if configured by cron-job.org
+apiRouter.get('/cron/scrape', handleCronScrape);

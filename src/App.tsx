@@ -5,6 +5,12 @@ import { ProductList } from './components/ProductList';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { TrackedProduct, StoreCatalogItem, SystemHealth } from './types';
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || ''
+).trim().replace(/\/+$/, '');
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+
 export default function App() {
   const [products, setProducts] = useState<TrackedProduct[]>([]);
   const [health, setHealth] = useState<SystemHealth | null>(null);
@@ -20,7 +26,7 @@ export default function App() {
 
   const fetchProducts = useCallback(async () => {
     try {
-      const res = await fetch('/api/products');
+      const res = await fetch(apiUrl('/api/products'));
       if (res.ok) {
         const data = await res.json();
         setProducts(data.products || []);
@@ -32,7 +38,7 @@ export default function App() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch(apiUrl('/api/health'));
       if (res.ok) {
         const data = await res.json();
         setHealth({
@@ -65,7 +71,7 @@ export default function App() {
 
   const handleTrackProduct = async (item: StoreCatalogItem) => {
     try {
-      const res = await fetch('/api/products/track', {
+      const res = await fetch(apiUrl('/api/products/track'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -93,7 +99,7 @@ export default function App() {
 
   const handleUntrackProduct = async (productId: number) => {
     try {
-      const res = await fetch(`/api/products/${productId}`, { method: 'DELETE' });
+      const res = await fetch(apiUrl(`/api/products/${productId}`), { method: 'DELETE' });
       if (res.ok) {
         await fetchProducts();
         if (selectedProduct?.product_id === productId) {
@@ -109,7 +115,7 @@ export default function App() {
   const handleManualScrape = async (productId: number) => {
     setActiveScrapingId(productId);
     try {
-      const res = await fetch(`/api/products/${productId}/scrape`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/products/${productId}/scrape`), { method: 'POST' });
       const data = await res.json();
 
       if (res.ok && data.result?.success) {
@@ -125,34 +131,63 @@ export default function App() {
     }
   };
 
-  const handleTriggerCron = async () => {
-    setIsCronRunning(true);
-    showToast('Starting scheduled cron batch scrape...', 'info');
-    try {
-      const res = await fetch('/api/cron/scrape', {
-        method: 'POST',
-        headers: {
-          Authorization: 'Bearer ine_cron_secret_rajat_2026'
-        }
-      });
-      const data = await res.json();
+  // const handleTriggerCron = async () => {
+  //   setIsCronRunning(true);
+  //   showToast('Starting scheduled cron batch scrape...', 'info');
+  //   try {
+  //     const res = await fetch('/api/cron/scrape', {
+  //       method: 'POST',
+  //       headers: {
+  //         
+  //       }
+  //     });
+  //     const data = await res.json();
 
-      if (res.ok) {
-        const summary = data.summary;
-        showToast(
-          `Cron batch finished: ${summary.successCount} succeeded, ${summary.failCount} failed (${data.durationMs}ms)`,
-          summary.failCount > 0 ? 'info' : 'success'
-        );
-      } else {
-        showToast(data.error || 'Cron batch execution failed', 'error');
-      }
-      await fetchProducts();
-    } catch (err: any) {
-      showToast(err.message || 'Cron error', 'error');
-    } finally {
-      setIsCronRunning(false);
+  //     if (res.ok) {
+  //       const summary = data.summary;
+  //       showToast(
+  //         `Cron batch finished: ${summary.successCount} succeeded, ${summary.failCount} failed (${data.durationMs}ms)`,
+  //         summary.failCount > 0 ? 'info' : 'success'
+  //       );
+  //     } else {
+  //       showToast(data.error || 'Cron batch execution failed', 'error');
+  //     }
+  //     await fetchProducts();
+  //   } catch (err: any) {
+  //     showToast(err.message || 'Cron error', 'error');
+  //   } finally {
+  //     setIsCronRunning(false);
+  //   }
+  // };
+
+  const handleTriggerCron = async () => {
+  setIsCronRunning(true);
+  showToast('Starting batch scrape...', 'info');
+
+  try {
+    const res = await fetch(apiUrl('/api/products/scrape-all'), {
+      method: 'POST'
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Batch scrape failed');
     }
-  };
+
+    showToast(
+      `Batch complete: ${data.summary.successCount} succeeded, ${data.summary.failCount} failed.`,
+      'success'
+    );
+
+    await fetchProducts();
+    await fetchHealth();
+  } catch (err: any) {
+    showToast(err?.message || 'Batch scrape failed', 'error');
+  } finally {
+    setIsCronRunning(false);
+  }
+};
 
   return (
     <div id="app-root" className="min-h-screen bg-slate-100/70 text-slate-900 font-sans flex flex-col">
