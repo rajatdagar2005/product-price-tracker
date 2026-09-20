@@ -218,6 +218,12 @@ import {
 } from 'lucide-react';
 import { StoreCatalogItem, TrackedProduct } from '../types';
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || ''
+).trim().replace(/\/+$/, '');
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+
 interface ProductSearchProps {
   trackedProducts: TrackedProduct[];
   onTrackProduct: (item: StoreCatalogItem) => Promise<void>;
@@ -273,8 +279,15 @@ export function ProductSearch({
 
     const timer = setTimeout(async () => {
       try {
+        // const response = await fetch(
+        //   `/api/catalog/search?q=${encodeURIComponent(trimmedQuery)}`,
+        //   {
+        //     signal: controller.signal
+        //   }
+        // );
+
         const response = await fetch(
-          `/api/catalog/search?q=${encodeURIComponent(trimmedQuery)}`,
+          apiUrl(`/api/catalog/search?q=${encodeURIComponent(trimmedQuery)}`),
           {
             signal: controller.signal
           }

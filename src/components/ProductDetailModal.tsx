@@ -3,6 +3,12 @@ import { X, RefreshCw, ExternalLink, Calendar, CheckCircle2, AlertTriangle, XCir
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrackedProduct, PriceStockObservation, ScrapeAttempt } from '../types';
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || ''
+).trim().replace(/\/+$/, '');
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+
 interface ProductDetailModalProps {
   product: TrackedProduct | null;
   onClose: () => void;
@@ -28,9 +34,14 @@ export function ProductDetailModal({
     if (!productId) return;
     setIsLoading(true);
     try {
+      // const [histRes, logsRes] = await Promise.all([
+      //   fetch(`/api/products/${productId}/history`),
+      //   fetch(`/api/products/${productId}/logs`)
+      // ]);
+
       const [histRes, logsRes] = await Promise.all([
-        fetch(`/api/products/${productId}/history`),
-        fetch(`/api/products/${productId}/logs`)
+        fetch(apiUrl(`/api/products/${productId}/history`)),
+        fetch(apiUrl(`/api/products/${productId}/logs`))
       ]);
 
       if (histRes.ok) {
